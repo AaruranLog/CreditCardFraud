@@ -1,0 +1,7 @@
+# ignore the huge zip file, and the huge csv file that this code relies on. 
+# you can download the files from the following link
+# https://www.kaggle.com/dalpozz/creditcardfraud
+
+# ignored files
+creditcardfraud.zip
+creditcardfraud/creditcard.csv
