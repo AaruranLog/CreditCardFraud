@@ -1,0 +1,206 @@
+---
+title: "CreditCardFraud-rmkdwn"
+author: "AaruranE"
+date: "January 21, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+setwd("C:/Users/Aaruran/Documents/GitHub/Machine learning Self-study/ccfraud/")
+```
+
+<!-- ## R Markdown -->
+
+<!-- This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. -->
+
+<!-- When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this: -->
+
+## Introduction
+
+This document is my first attempt at an RMarkdown project. I downloaded a dataset from <https://www.kaggle.com/dalpozz/creditcardfraud> about credit card fraud. It'll be an experiment for me.
+
+```{r dataframe, echo=FALSE}
+df <- read.csv("creditcardfraud/creditcard.csv")
+attach(df)
+df$Class <- as.factor(df$Class)
+```
+
+```{r df, echo=TRUE, cache=TRUE}
+head(df)
+summary(df)
+```
+
+The majority of the features of this dataset are foreign to me, aside from the last two: Amount, and Class.
+
+## General Histograms
+
+Below are some embedded histograms.
+
+```{r hists, echo=FALSE, message=FALSE, cache=TRUE}
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyr)
+
+df %>% select(-Time, -Class) %>%reshape2::melt() %>% ggplot(aes(x=value)) + geom_histogram() + facet_wrap(~variable,scales = "free")
+```
+
+Many of the variables appear to have very low variance. Specifically I refer to 
+V2, V5, V6, V7, V8, V10, V20, V21, V23, V27, V28, and Amount. To disprove, or verify, this
+observation, I inspect closer histograms of just these select variables
+
+###### Potentially Low Variance Histograms
+```{r low var hists, echo=TRUE, message=FALSE}
+
+df %>% select(V2, V5, V6, V7, V8, V10, V20, V21, V23, V27, V28) %>% melt %>% ggplot(aes(x=value)) + geom_histogram(binwidth=0.1) + facet_wrap(~variable,scales="free")
+
+```
+Even with the greatly reduced binwidth, it appears that these histograms are still very narrow. 
+
+###### Variance
+```{r var calculation, echo=TRUE, message=FALSE}
+lapply(X=df, FUN=var)
+```
+
+The above calculation further supports the suspicion. One potential next step is identify which pairs of features are strongly correlated. This task is well-suited for the correlation matrix.
+
+
+```{r correlation matrix, echo-TRUE, message=FALSE}
+
+cor.df <- cor(df[-31])
+library(corrgram)
+corrgram(cor.df,type='corr',order=TRUE, panel=panel.shade)
+```
+
+From viewing the correlelogram, there are some clear correlations to investigate. 
+
+###### Potentially well-correlated relationships
+```{r looking for correlation, echo=TRUE, message=FALSE}
+ggplot(df, aes(x=Amount, y=V7, color=Class)) + geom_point() + geom_smooth()
+ggplot(df, aes(x=Amount, y=V20, color=Class)) + geom_point() + geom_smooth()
+ggplot(df, aes(x=V7, y=V20, color=Class)) + geom_point() + geom_smooth()
+
+
+```
+
+It's rather clear that V7 and V20 do not possess a strong correlation, but the other two pairs of variables plotted above do. However, there is the potential issue of overplotting , and the issue of behaviour being split along different Class values. That is to say, first, that tremendous number of points may have led to misleading plots, and second, that the observations may split very differently across the classes.
+
+
+### Splitting the data
+
+The plan of action is to construct stratified random samples. Two non-overlapping sets will be used for training and validation. 
+```{r splitting data, echo=TRUE, message=TRUE}
+df.class0 <- dplyr::filter(df, Class==0)
+df.class1 <- dplyr::filter(df, Class==1)
+proportion <- as.numeric(length(df.class1[,1])/length(df.class0[,1]))
+
+training.size0 <- floor(0.7*nrow(df.class0))
+
+set.seed(115)
+train.index.0 <- sample(seq_len(nrow(df.class0)), size=training.size0)
+
+train <- df.class0[train.index.0,-31]
+test <-  df.class0[-train.index.0,]
+```
+
+## Principal Component Analysis
+
+The intention, now, is to use principal component analysis on the training data set. 
+
+```{r prcomp}
+library(stats)
+train.noClass <- train
+cc.pca <- prcomp(train.noClass, center=TRUE, scale=TRUE)
+
+plot(cc.pca)
+summary(cc.pca)
+
+#Predict 
+predicted <- predict(cc.pca, newdata=test[,-31])
+
+predicted.Class <- vector(mode="numeric", length=length(predicted))
+predicted %>% as.data.frame %>% ggplot( aes(x=PC1, y=PC2))+ geom_point()
+
+
+```
+
+### Next Attempt:kNN
+
+I realize, now, that a simpler model is probably the best way to go about prediction.
+
+```{r knn attempt, echo=TRUE, message=TRUE, cache=TRUE}
+training.size <- floor(0.75*nrow(df))
+train.knn.index <- sample(seq_len(nrow(df)), size=training.size)
+training.set <- df[train.knn.index,]
+test.set <- df[-train.knn.index,]
+
+library(FNN)
+knn1 <- FNN::knn(training.set[,c(-1,-31)], test.set[,c(-1,-31)], training.set[,31], k=1, prob=FALSE, algorithm = "kd_tree")
+
+```
+
+With this, we have a simple model to predict whether or not incoming credit card transactions are fradulent. 
+However, we do not know this model's accuracy. One commonly used technique for binary classification problems such as this, is to use the F1-score. 
+
+Visit these links to learn more about the F1-score
+<https://en.wikipedia.org/wiki/F1_score>  
+<http://stackoverflow.com/questions/12572357/precision-recall-and-f-measure-in-r>
+
+```{r f1-score}
+
+truePositives <- sum(as.numeric(knn1) & as.numeric(test.set$Class))
+predictedPositives <- sum(as.numeric(knn1))
+actualPositives <- sum(as.numeric(test.set$Class))
+
+precision <- truePositives / predictedPositives
+recall <- truePositives / actualPositives
+Fmeasure <- 2 * precision * recall / (precision + recall)
+print(Fmeasure)
+
+```
+
+The Fmeasure is very close to one with this predictive model. It is worth investigating which value of k is optimal.
+
+```{r knn cross validate}
+
+maxK <- 10
+knnResults <- data.frame(k = seq(1,maxK), Fscore = numeric(maxK))
+
+for(i in seq(1,maxK))
+{
+    i.nn <- FNN::knn(train =training.set[,c(-1, -31)], test = test.set[,c(-1,-31)], 
+                    cl = training.set$Class, k = i, prob = FALSE, algorithm = "kd_tree")
+    
+    truePositives <- sum(as.numeric(i.nn) & as.numeric(test.set$Class))
+    predictedPositives <- sum(as.numeric(i.nn))
+    actualPositives <- sum(as.numeric(test.set$Class))    
+    
+    i.precision <- truePositives / predictedPositives
+    i.recall <- truePositives / actualPositives
+    
+    i.f1 <- 2*i.precision*i.recall / (i.precision + i.recall)
+    
+    knnResults$Fscore[i] <- i.f1
+}
+
+ggplot(knnResults, aes(x=k, y=Fscore)) + geom_point() + geom_hline(yintercept = max(knnResults$Fscore))
+
+
+```
+
+As the above plot demonstrates, the optimal k for kNN is 8, neglecting k > 10. This k-value sets the F-score to 0.9985135. 
+
+An alternative technique that interests me is known as the Support Vector Machine.
+
+### Support Vector Machine
+```{r svm}
+
+
+```
+
+
+
+
+
+<!-- Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot. -->
