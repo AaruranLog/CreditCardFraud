@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-setwd("C:/Users/Aaruran/Documents/GitHub/Machine learning Self-study/ccfraud/")
+setwd("C:/Users/Aaruran/Documents/GitHub/CreditCardFraud/")
 ```
 
 <!-- ## R Markdown -->
@@ -21,9 +21,19 @@ setwd("C:/Users/Aaruran/Documents/GitHub/Machine learning Self-study/ccfraud/")
 This document is my first attempt at an RMarkdown project. I downloaded a dataset from <https://www.kaggle.com/dalpozz/creditcardfraud> about credit card fraud. It'll be an experiment for me.
 
 ```{r dataframe, echo=FALSE}
-df <- read.csv("creditcardfraud/creditcard.csv")
+df <- data.table::fread("creditcardfraud/creditcard.csv")
 attach(df)
 df$Class <- as.factor(df$Class)
+
+df <- data.table::fread("creditcardfraud/small.csv")
+attach(df)
+df$Class <- as.factor(df$Class)
+
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyr)
+
 ```
 
 ```{r df, echo=TRUE, cache=TRUE}
@@ -38,10 +48,6 @@ The majority of the features of this dataset are foreign to me, aside from the l
 Below are some embedded histograms.
 
 ```{r hists, echo=FALSE, message=FALSE, cache=TRUE}
-library(ggplot2)
-library(dplyr)
-library(reshape2)
-library(tidyr)
 
 df %>% select(-Time, -Class) %>%reshape2::melt() %>% ggplot(aes(x=value)) + geom_histogram() + facet_wrap(~variable,scales = "free")
 ```
@@ -96,9 +102,11 @@ df.class1 <- dplyr::filter(df, Class==1)
 proportion <- as.numeric(length(df.class1[,1])/length(df.class0[,1]))
 
 training.size0 <- floor(0.7*nrow(df.class0))
+training.size1 <- floor(0.7*nrow(df.class1))
 
 set.seed(115)
 train.index.0 <- sample(seq_len(nrow(df.class0)), size=training.size0)
+train.index.1 <- sample(seq_len(nrow(df.class1)), size=training.size1)
 
 train <- df.class0[train.index.0,-31]
 test <-  df.class0[-train.index.0,]
@@ -191,16 +199,77 @@ ggplot(knnResults, aes(x=k, y=Fscore)) + geom_point() + geom_hline(yintercept = 
 
 As the above plot demonstrates, the optimal k for kNN is 8, neglecting k > 10. This k-value sets the F-score to 0.9985135. 
 
-An alternative technique that interests me is known as the Support Vector Machine.
-
 ### Support Vector Machine
+
+An alternative technique that interests me is known as the Support Vector Machine. The package I had originally intended to use, libsvm, isn't available for the version of R I'm using (3.3.2), which is the latest. Hence, I'm going to try using a simple back-of-the-envelope kind-of idea to implement my SVM.
+
+Suppose we have a bunch of data points on the plane (x,y). Furthermore, suppose each data point belongs to one of two classes, A and B. The fundamental idea behind implementing an SVM is to select a relation F(x,y) = 0 such that for all points (x_i, y_i) in the dataset,
+
+F(x_i, y_i) > 0 iff (x_i, y_i) is in class A, and 
+F(x_i, y_i) < 0 iff (x_i, y_i) is in class B.
+
+However, the choice of F is not unique. For instance, given two well-defined classes, one can perturb F slightly without changing the classification results. Moreover, the complexity/degree of F are another aspect of the relation which is not unique. Over the reading I've done, the general consensus is that, for high-dimensional data, a linear function works very well. Hence, that will be how I proceed. 
+
+That being said, there is not a unique linear function that best optimizes in the general case. The typical "best choice" is the linear function which has the maximum possible width without changing the classification results. However, I have an alternative technique, which is simpler intuitively.
+
+The idea is to identify the midpoints of the two classes. Then, compute the line segment connecting these  midpoints. We can use the perpindicular bisecting hyperplane as our classifying function. This method produces a weighted SVM, and weighs the points of the less populated class more heavily.
+
+
 ```{r svm}
 
+train.index <- sample(seq_len(nrow(df)), size = floor(0.7*nrow(df)))
+train <- df[train.index,] %>% as.data.frame()
+test <- df[-train.index,]%>% as.data.frame()
+
+
+meanZero <- numeric(ncol(train))
+meanOne <-  numeric(ncol(train))
+
+train.0 <- train[(train$Class == 0),]
+meanZero <- colMeans(train.0[,-31])
+train.1 <- train[(train$Class == 1),]
+meanOne <-  colMeans(train.1[,-31] )
+
+library(Matrix)
+
+midPoint <- (meanZero + meanOne) / 2 %>% as.matrix()
+normal <- as.matrix(meanZero - meanOne)
+
+# The equation of the bisecting hyperplane is:
+# (x - midpoint) dot normal = 0
+# where normal is a vettor that is normal to the hyperplane.
+
+svm_func <- function(r)
+{
+  value <- (midPoint - as.matrix(r)) %*% normal
+  return( sign(value))
+}
+
+# The above function is NEGATIVE when class == 0
+# and                   POSITIVE when class == 1
+
+svm.predict.class <- function(r)
+{
+  return (svm_func(r) + 1 )/2  
+}
+
+svm_predicted.class <- svm.predict.class(test[,-31])
+
+truePositives <- sum(svm_predicted.class & as.numeric(test$Class))
+predictedPositives <- sum(svm_predicted.class)
+actualPositives <- sum(as.numeric(test$Class))
+    
+precision <- truePositives / predictedPositives
+recall <- truePositives / actualPositives
+    
+f1 <- 2*precision*recall / (precision + recall)
+f1
 
 ```
 
+Running the weighted svm on the training data proves that this technique is poor. I can't say I'm surprised, because there were a number of weaknesses to this model. For one, the prediction is highly skewed towards the anomalous classes, and may be misclassifying observations as anomalies as a consequence. Moreover, there are no considerations for mislabelled training data. Worse still, the model neglects the relevance of the Time variable. All in all, while this technique is intuitive, it is also fruitless.
 
-
+KNN with k=8 seems to be the better of the two methods by far.
 
 
 <!-- Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot. -->
