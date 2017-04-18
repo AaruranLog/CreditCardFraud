@@ -1,0 +1,8 @@
+setwd("/media/sf_Git/CreditCardFraud/")
+library(tidyverse)
+library(data.table)
+df <- fread("creditcardfraud/creditcard.csv")
+df2 <- fread("creditcardfraud/small.csv")
+names(df)
+ggplot(df2 %>% gather(Vcolumn, Vlabel, contains("V")), aes (x=Time, y=Amount, color=Class)) + geom_point() 
+ggplot(df2 %>% gather(Vcolumn, Vlabel, contains("V")), aes (x=Time, y=Vlabel, color=Class)) + geom_point()+ facet_wrap(~Vcolumn)
